@@ -1,0 +1,698 @@
+---
+title: "Final Project"
+author: "Juyee Sabade"
+date: "4/3/2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(patchwork)
+library(fpp3)
+options(digits=2)
+library(tseries)
+library(readxl)
+library(dplyr)
+library(pacman)
+library(tsibble)
+library(tidyverse)
+
+p_load(data.table,lubridate,collapse,ggplot2,fixest,stringr,modelsummary,eeptools)
+```
+
+
+## Importing data
+
+In the dashboard, I will be covering various US cities. But for the purpose of this submission, I will be doing a time series analysis on San Francisco's Daily uber trips data from 2nd January 2016 to 31 March 2020. This was obtained from Uber Movement data.
+
+```{r}
+sanfranscico <- fread("C://Users//sabad//OneDrive//Documents//Time Series Analysis//Project//Data//formatted_sanfrancisco.csv")
+```
+
+
+```{r}
+setDT(sanfranscico)
+avg_times <- sanfranscico[,mean_travel_time:= mean(MeanTravelTimeSeconds),by=Date]
+```
+
+
+## Analyzing Mean travel times of daily Uber trips in San Francisco
+
+```{r}
+avg_times <- avg_times %>% select(Date,mean_travel_time) %>% distinct()
+```
+
+```{r}
+avg_times <- avg_times %>% mutate(day=weekdays(Date))
+```
+
+
+```{r}
+ggplot(avg_times)+
+  geom_point(aes(x=Date,y=mean_travel_time),color="cornflowerblue", size = 2, alpha=.8)+
+  labs(title="Time plot of mean travel duration")
+```
+
+As we can observe here, the mean travel time decreases around the end of the year. And we can also see a very steep and uncharacteristic drop after February 2020 which is due to the effects of the pandemic. For the purpose of or project, we will only take data till January 2020 as the pandemic is a one time occurrence which can add bias to our forecasting. 
+
+```{r}
+avg_times <- slice(avg_times,1:(n()-60))
+```
+
+```{r}
+ggplot(avg_times)+
+  geom_point(aes(x=Date,y=mean_travel_time),color="cornflowerblue", size = 2, alpha=.8)+
+  labs(title="Time plot of mean travel duration before the pandemic")
+```
+
+Here we can observe the mean travel time decreases around the end of each year and remains less till January of the new year.
+
+```{r}
+summary(avg_times)
+```
+
+On an average it takes 1089 seconds to go from the central part of San Francisco to any other region. The minimum duration is 602 which was in 2016 and the maximum duration is 1439. This could mean that traffic has increased ovwer the years or there are a larger number of trips to zone farther out from the origin. Also this indiates that our data is left skewed as there are a longer concentration of longer trips than shorter trips.
+We can confirm that from the below histogram as well.
+
+
+```{r}
+hist(avg_times$mean_travel_time)
+```
+
+
+
+## Analyzing total number of Uber trips in San Francisco everyday from the central point of the city to all the destination zones.
+
+
+```{r}
+trip_count <- sanfranscico[,count_trips:= .N,by=Date] 
+trip_count <- trip_count %>% select(Date,count_trips) %>% distinct()
+trip_count <- slice(trip_count,1:(n()-60))
+```
+
+
+```{r}
+trip_count <- trip_count %>% mutate(day=weekdays(Date))
+```
+
+
+```{r}
+ggplot(trip_count)+
+  geom_point(aes(x=Date,y=count_trips),color="cornflowerblue", size = 2, alpha=.8)+
+  labs(labs = "Time plot of trip counts")
+```
+
+
+```{r}
+merged_data <- merge(avg_times,trip_count,by="Date")
+```
+
+```{r}
+ggplot(merged_data) +
+  geom_point(aes(x=count_trips,y=mean_travel_time),color="steelblue") +
+  labs(x="Number of Destinations",y="Mean Travel Time (in seconds)",title="Correlation between travel time and number of destinations")
+```
+
+
+
+As we can observe in the above plot, there is a linear relationship between number of destination zones and mean travel time because a higher number of trips could indicate more traffic which could in turn lead to higher travel times.
+
+
+```{r}
+week_stats <- sanfranscico %>% group_by(DayOfWeek) %>% summarise(count_trips = n())
+ggplot(week_stats,aes(x=DayOfWeek,y=count_trips,fill=DayOfWeek,group=DayOfWeek))+
+  geom_bar(stat="identity")+
+  labs(title="Number of trips on each day of the week",x="Day of the Week",y="Number of trips")
+```
+
+
+
+We see the highest number of trips on weekends. There is not much difference among the other weekdays.
+
+```{r}
+ggplot(avg_times,aes(x=Date,y=mean_travel_time,color=day), size = 2, alpha=.8)+
+  geom_point()+
+  labs("Time plot of mean travel duration")
+```
+
+
+## Analyzing mean travel times faceted out by weekdays
+
+```{r}
+ggplot(avg_times)+
+  geom_point(aes(x=Date,y=mean_travel_time),color="cornflowerblue", size = 2, alpha=.8)+
+  facet_wrap(~day, scales="free_y") +
+  labs(title="Time plot of trip counts")
+```
+
+Here we observe that the mean travel time is lesser on Mondays, Fridays and Sundays. That might be either because there are lesser Uber trips on those days or there is lesser traffic on the road on those days. Around the year 2020, the mean travel time starts reducing on all the days.
+
+
+## Analyzing daily trip counts facted out by weekdays
+
+```{r}
+ggplot(trip_count)+
+  geom_point(aes(x=Date,y=count_trips),color="cornflowerblue", size = 2, alpha=.8)+
+  facet_wrap(~day, scales="free_y") +
+  labs(title="Time plot of trip counts")
+```
+
+
+Here we observe that the number of trips are usually highest on weekends and lesser on weekdays. This could be because lot of people might be 
+going out on weekend.
+
+
+
+```{r}
+avg_times <-  avg_times %>% mutate(Date_parsed = date(Date)) %>% select(-Date)
+avg_times_ts <- as_tsibble(avg_times,index=Date_parsed)
+```
+
+
+```{r}
+avg_times_ts <- fill_gaps(avg_times_ts,mean_travel_time = mean(mean_travel_time))
+```
+
+
+```{r}
+avg_times_ts %>% gg_season(mean_travel_time) + labs(y="Mean Travel Time",x="Month",title="Seasonal plot of mean travel times")
+```
+
+
+
+We are seeing seasonal variations wherein there is a decrease in January and December in mean travel times.
+
+
+```{r}
+avg_times_ts %>% gg_season(mean_travel_time,period="week") + labs(y="Mean Travel Time",x="Day",title="Seasonal plot showing daily seasonal patterns of mean travel times")
+```
+
+
+
+
+
+```{r}
+trip_count <-  trip_count %>% mutate(Date_parsed = date(Date)) %>% select(-Date)
+trip_count_ts <- tsibble(trip_count,index=Date_parsed)
+trip_count_ts <- fill_gaps(trip_count_ts,.full = TRUE)
+```
+
+
+
+```{r}
+trip_count_ts <- fill_gaps(trip_count_ts,.full = TRUE)
+```
+
+
+```{r}
+trip_count_ts %>% gg_season(count_trips) + labs(y="Number of Trips",x="Month",title="Seasonal plot of number of destination zones")
+```
+
+
+
+
+```{r}
+trip_count_ts %>% gg_season(count_trips,period="week") + labs(y="Number of Trips",x="Day",title="Seasonal plot of number of destination zones")
+```
+
+
+
+
+```{r}
+avg_times_ts %>% gg_lag(mean_travel_time,geom="point")+
+  labs(x="lag(Mean Travel Time)",title="Lag Plot of Mean Travel times")
+```
+
+
+
+
+```{r}
+avg_times_ts %>% ACF(mean_travel_time,lag_max=48) %>% autoplot() +
+  labs(title="ACF Plot of Mean Travel Times")
+```
+
+
+
+Here we are seeing a scalloped shape because there is a weekly seasonality that can be observed. The strongest correlation can be seen among the starting two consecutive days.
+
+
+
+```{r}
+trip_count_ts %>% ACF(count_trips,lag_max=48) %>% autoplot() +
+  labs(title="ACF Plot of Number of Trips")
+```
+
+
+
+Even in this ACF plot, we are observing a very strong weekly seasonality in the data. So we can confirm that the number of trips on a certain day of the week are fairly predictable. 
+
+
+## Plotting 30 day moving average
+
+```{r}
+avg_times_ma <- avg_times_ts %>% mutate(
+    `30-MA` = slider::slide_dbl(mean_travel_time, mean,
+                .before = 15, .after = 14, .complete = TRUE)
+  )
+```
+
+
+```{r}
+ggplot(avg_times_ma) +
+  geom_line(aes(x=Date_parsed,y = `30-MA`), colour = "#D55E00") +
+  labs(y = "Mean Travel Time",
+       title = "30 day moving average of travel time in seconds") +
+  guides(colour = guide_legend(title = "series"))
+```
+
+
+
+Here we can see that the seasonality pattern that we identified in the previous plots wherein the mean travel time reduces around the end of each year and remains lesser till January is more clearly identifiable.
+
+
+```{r}
+trip_counts_ma <- trip_count_ts %>% mutate(
+    `30-MA` = slider::slide_dbl(count_trips, mean,
+                .before = 15, .after = 14, .complete = TRUE)
+  )
+```
+
+
+```{r}
+ggplot(trip_counts_ma) +
+  geom_line(aes(x=Date_parsed,y = `30-MA`), colour = "#D55E00") +
+  labs(y = "Number of Trips",
+       title = "30 day moving average of trip counts") +
+  guides(colour = guide_legend(title = "series"))
+```
+
+We can observe the same seasonality pattern in this plot as well which also confirms that trip counts are correlated with mean travel time. 
+
+
+```{r}
+lambda <- avg_times_ts %>%
+  features(mean_travel_time, features = guerrero) %>%
+  pull(lambda_guerrero)
+
+avg_times_ts %>%
+  autoplot(box_cox(mean_travel_time, lambda)) +
+  labs(y = "",
+       title = latex2exp::TeX(paste0(
+         "Transformed mean travel times with $\\lambda$ = ",
+         round(lambda,2))))
+```
+
+```{r}
+avg_times_ts %>% features(mean_travel_time,feat_stl)
+```
+
+
+```{r}
+trip_count_ts %>% features(count_trips,feat_stl)
+```
+
+
+# Time series decompositon of mean travel time
+
+## Classical multiplicative Decomposition
+
+```{r}
+dcmp <- avg_times_ts %>%  model(classical_decomposition(mean_travel_time,type="multiplicative")) 
+
+components(dcmp) %>% autoplot()
+```
+
+Here we are not seeing a very good decompositon as there is still a yearly seasonal component left in our trend component.
+
+## STL Decomposition
+
+```{r}
+library(feasts)
+ 
+dcmp <- avg_times_ts %>% model(stl=STL(mean_travel_time ~ trend(window=31) +
+                                          season(window="periodic"),
+                                        robust=TRUE)) 
+
+components(dcmp) %>% autoplot()
+```
+
+```{r}
+dcmp <- avg_times_ts %>% model(stlf=decomposition_model(STL(log(mean_travel_time) ~ trend(window=30),
+                                        robust=TRUE),
+                               SNAIVE(season_adjust)))
+
+dcmp %>% forecast(h=90) %>% autoplot(avg_times_ts)
+```
+
+
+Here we are observing a good time series decomposition because there is a seperate seasonal component for yearly seasonality and weekly seasonality.
+
+
+```{r}
+avg_times_ts %>% model(SNAIVE(log(mean_travel_time))) %>% forecast(h=365) %>% autoplot(avg_times_ts) 
+```
+
+
+```{r}
+dcmp %>% gg_tsresiduals()
+```
+
+
+
+```{r}
+slice(avg_times,1:(n()-60))
+```
+
+
+## Training set 
+
+```{r}
+train <- slice(avg_times,1:(n()-60))
+train <- as_tsibble(train,index=Date_parsed)
+train <- fill_gaps(train,mean_travel_time = mean(mean_travel_time))
+```
+
+```{r}
+train_dcmp <- train %>% model(stlf=decomposition_model(STL(log(mean_travel_time) ~ trend(window=31),
+                                        robust=TRUE),
+                               NAIVE(season_adjust)))
+
+```
+
+
+```{r}
+train_dcmp %>% forecast(h=60) %>% autoplot(avg_times_ts,level=NULL,color="pink")
+```
+
+```{r}
+train_fc <- train_dcmp %>% forecast(h=60)
+accuracy(train_fc,avg_times_ts)
+```
+
+
+
+```{r}
+fit_ets <- train %>% model(additive = ETS(mean_travel_time ~ error("A") + trend("A") +
+                                                season("A")),
+    hw = ETS(mean_travel_time ~ error("M") + trend("Ad") +
+                                                season("M")))
+
+fit_ets_fc <- fit_ets %>% forecast(h=60)
+```
+
+```{r}
+fit_ets_fc %>% autoplot(avg_times_ts,level=NULL)
+```
+
+```{r}
+report(fit_ets)
+```
+
+```{r}
+components(fit_ets) %>% autoplot()
+```
+
+```{r}
+avg_times <- avg_times %>% mutate(week=yearweek(Date_parsed))
+#avg_times <- avg_times %>% mutate(month=yearmonth(Date_parsed))
+```
+
+```{r}
+avg_times_mo <- avg_times %>% group_by(month) %>% summarise(mean_travel_time = mean(mean_travel_time))
+
+avg_times_mo <- as_tsibble(avg_times_mo,index=month)
+
+avg_times_mo <- fill_gaps(avg_times_mo,mean_travel_time = mean(mean_travel_time))
+
+
+avg_times_week <- avg_times %>% group_by(week) %>% summarise(mean_travel_time = mean(mean_travel_time))
+
+avg_times_week <- as_tsibble(avg_times_week,index=week)
+
+avg_times_week <- fill_gaps(avg_times_week,mean_travel_time = mean(mean_travel_time))
+
+```
+
+
+```{r}
+autoplot(avg_times_week)
+```
+
+
+
+# Stationarity and differencing
+
+```{r}
+avg_times_week %>% features(log(mean_travel_time),unitroot_nsdiffs)
+```
+
+```{r}
+avg_times_week  %>% mutate(log_travel_time =difference(log(mean_travel_time),52)) %>% features(log_travel_time,unitroot_ndiffs)
+```
+
+
+```{r}
+avg_times_week %>% mutate(doubly_diff_travel_time = difference(difference(log(mean_travel_time),52))) %>%
+  features(doubly_diff_travel_time,unitroot_kpss)
+```
+
+```{r}
+avg_times_week <- avg_times_week %>% mutate(log_travel_time = difference(log(mean_travel_time),52))
+
+autoplot(avg_times_week,log_travel_time)
+```
+
+```{r}
+avg_times_week <- avg_times_week %>% mutate(doubly_diff_travel_time = difference(difference(log(mean_travel_time),52)))
+```
+
+
+```{r}
+autoplot(avg_times_week,doubly_diff_travel_time)
+```
+
+
+## ARIMA Modelling
+
+```{r}
+avg_times_week %>% gg_tsdisplay(doubly_diff_travel_time,plot_type = "partial",lag=52)
+```
+
+
+
+```{r}
+```
+
+
+
+
+We are seeing correlations in lag 7, lag 14, etc. that is on a weekly basis. So we will be applying one more order of differencing.
+
+## Doubly differenced
+
+```{r}
+avg_times_ts %>% gg_tsdisplay(difference(mean_travel_time,31) %>% difference() ,plot_type = "partial",lag=36)
+```
+
+
+```{r}
+
+```
+
+
+Here we are seeing some minor spikes. The significant spike at in lag 31 in the ACF suggests a seasonal MA(1) component
+
+```{r}
+fit <- avg_times_week %>%
+  model(arima011011 = ARIMA(mean_travel_time ~ pdq(0,1,1) + PDQ(0,1,1)),
+    arima310010 = ARIMA(mean_travel_time ~ pdq(3,1,0) + PDQ(0,1,0)),
+    auto = ARIMA(mean_travel_time, stepwise = FALSE, approx = FALSE))
+```
+
+
+```{r}
+res <- fit %>% pivot_longer(everything(), names_to = "Model name",
+                     values_to = "Orders")
+```
+
+```{r}
+glance(fit) %>% arrange(AICc) %>% select(.model:BIC)
+```
+
+```{r}
+fit %>% select(arima011011) %>% gg_tsresiduals(lag=52)
+```
+
+
+
+```{r}
+augment(fit) %>%
+  filter(.model == "arima011011") %>%
+  features(.innov, ljung_box, lag=52, dof=4)
+```
+
+Here we see there are some leftover residuals. 
+
+## ARIMA Forecasting
+
+```{r}
+forecast(fit,h=365) %>%
+  filter(.model=='arima011011') %>% autoplot(avg_times_week) +
+  labs(title = "Forecasting mean travel times",
+       y="Mean travel time")
+
+```
+
+
+
+## Forecasting with STL decomposition
+
+```{r}
+fit_dcmp_new <- avg_times_ts %>%
+  model(stlf = decomposition_model(
+    STL(mean_travel_time ~ trend(window = 7), robust = TRUE),
+    NAIVE(season_adjust)
+```
+
+
+```{r}
+))
+
+fit_dcmp_new %>%
+  forecast(h=90) %>%
+  autoplot(avg_times_ts)+
+  labs(y = "Mean travel time",
+       title = "Forecasting Mean travel times")
+```
+
+```{r}
+predictions <- fit_dcmp_new %>%
+  forecast(h=90) %>% hilo()
+```
+
+```{r}
+fit_harmonic <- avg_times_ts %>% model(
+  dhr = ARIMA(sqrt(mean_travel_time) ~ PDQ(0,0,0) + pdq(d=0)+
+    fourier(period=7,K=3)+
+    fourier(period=30,K=2))
+)
+
+fc_fit_harmonic <- fit_harmonic %>% forecast(h=365)
+```
+
+
+```{r}
+fc_fit_harmonic %>% autoplot(avg_times_ts)
+```
+
+```{r}
+fit_hr <- model(avg_times_week,
+                `K = 7` = ARIMA(log(mean_travel_time) ~ fourier(K=7) + PDQ(0,0,0)),
+                `K = 8` = ARIMA(log(mean_travel_time) ~ fourier(K=8) + PDQ(0,0,0)),
+                `K = 9` = ARIMA(log(mean_travel_time) ~ fourier(K=9) + PDQ(0,0,0)),
+                `K = 10` = ARIMA(log(mean_travel_time) ~ fourier(K=10) + PDQ(0,0,0)),
+                `K = 11` = ARIMA(log(mean_travel_time) ~ fourier(K=11) + PDQ(0,0,0)),
+                `K = 12` = ARIMA(log(mean_travel_time) ~ fourier(K=12) + PDQ(0,0,0))
+                 )
+```
+
+
+```{r}
+fit_hr %>% forecast(h="2 years") %>% autoplot(avg_times_ts,level=95) + 
+  facet_wrap(vars(.model),ncol=2)+
+  guides(colour="none",fill="none",level="none")+
+  geom_label(
+    aes(x = yearweek("2015 W53"), y = 1500,
+        label = paste0("AICc = ", format(AICc))),
+    data = glance(fit_hr))+
+  labs(title= "Mean Travel times forecast",
+       y="Mean travel time")
+```
+
+
+```{r}
+#install.packages("fable.prophet")
+library(fable.prophet)
+```
+
+
+```{r}
+train_wk <- slice(avg_times_week,1:(n()-60))
+#train <- as_tsibble(train,index=Date_parsed)
+#train <- fill_gaps(train,mean_travel_time = mean(mean_travel_time))
+```
+
+
+
+```{r}
+
+
+fit_prop <- train_wk %>% model (
+  arima = ARIMA(mean_travel_time),
+  prophet = prophet(mean_travel_time ~ season(period=52,order=10,type="multiplicative"))
+)
+
+fc_prop <- fit_prop %>% forecast(h=60)
+#fc_prop %>% autoplot(avg_times_week)
+```
+
+```{r}
+fc_prop %>% autoplot(avg_times_week)
+#fc_prop
+```
+
+```{r}
+fc_prop %>% accuracy(avg_times_week)
+```
+
+```{r}
+fit_prop %>% forecast()
+```
+
+
+
+```{r}
+fit_ph_dcmp <- avg_times_week %>% model(
+  prophet(log(mean_travel_time) ~
+            season(period = "month", order = 5) +
+            season(period="year",order=10))
+)
+
+fit_ph_dcmp %>% 
+  components() %>%
+  autoplot()
+```
+
+```{r}
+fit_ph_dcmp %>% gg_tsresiduals()
+```
+
+```{r}
+fc_ph <- fit_ph_dcmp %>% forecast(h=208) 
+
+fc_ph %>% autoplot(avg_times_week)
+
+```
+
+```{r}
+fit_ph_dcmp <- train_wk %>% model(
+  prophet(mean_travel_time ~
+            season(period = "month", order = 5) +
+            season(period="year",order=10))
+)
+
+fit_ph_dcmp %>% 
+  components() %>%
+  autoplot()
+```
+
+
+```{r}
+fc_ph <- fit_ph_dcmp %>% forecast(h=60) 
+
+fc_ph %>% autoplot(avg_times_week)
+```
+
+```{r}
+fc_ph %>% accuracy(avg_times_week)
+```
