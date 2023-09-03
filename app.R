@@ -18,10 +18,6 @@ library(fable.prophet)
 
 #print(packageVersion("aws.s3"))
 
-#Sys.setenv("AWS_ACCESS_KEY_ID" = "AKIAQJJEF7ZOA7H2EQ3F","AWS_SECRET_ACCESS_KEY" = "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",
-#           "AWS_DEFAULT_REGION" = "ap-south-1"
-#)
-
 
 p_load(data.table,lubridate,collapse,ggplot2,fixest,stringr,modelsummary,eeptools)
 
