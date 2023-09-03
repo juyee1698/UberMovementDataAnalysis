@@ -1,4 +1,4 @@
-# UberTravelDataAnalysis
+# UberMovementDataAnalysis
 
 In this project, I developed a dashboard to analyze traffic flow and urban mobility of Uber trips in North American cities to forecast future Uber demand and optimize trip durations. The data that is used is Uber movement data that provides a centralized and comprehensive source for downloading uber trips related data across various cities of the world. The project is built using R and the dashboard is deployed through Shiny. The data is dynamically ingested from AWS S3.
 
